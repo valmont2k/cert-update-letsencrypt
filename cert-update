@@ -1,0 +1,73 @@
+#!/bin/bash
+
+
+
+
+#достаточно указать letsencrypt'у, в какой папке будет лежать файл. Конфиг nginx: 
+
+#location /.well-known/acme-challenge {
+#root /var/www/letsencrypt/;
+#}
+
+#Генерация сертфиката:
+
+#./letsencrypt-auto certonly --webroot -w /var/www/letsencrypt -d domain.com
+
+#файл закидывается для исполнения в папку месячных заданий крон
+
+
+
+
+cd /var/www/letsencrypt
+
+# вот примерно так мы их сделали
+#./letsencrypt-auto certonly --webroot -w /var/www/letsencrypt -d gitlab.game-forest.com
+#./letsencrypt-auto certonly --webroot -w /var/www/letsencrypt -d im.game-forest.com 
+
+#вот так их будем обновлять
+./letsencrypt-auto renew 
+
+
+#this convert keys for jira
+
+#author Ivan Tichy
+#Please modify these values according to your environment
+certdir=/etc/letsencrypt/live/gitlab.game-forest.com/ #just replace the domain name after /live/
+keytooldir=/opt/atlassian/jira/jre/bin/ #java keytool located in jre/bin
+mydomain=gitlab.game-forest.com #put your domain name here
+#myemail=xxxxxxx@gmail.com #your email
+#networkdevice=eth0 #your network device  (run ifconfig to get the name)
+keystorefile=/home/jira/.keystore #located in home dir of user that you Tomcat is running under - just replace jira with your user you use for Tomcat, see ps -ef to get user name if you do not know
+
+#the script itself:
+#cd /var/git/letsencrypt
+#git pull origin master
+#iptables -I INPUT -p tcp -m tcp --dport 9999 -j ACCEPT
+#iptables -t nat -I PREROUTING -i $networkdevice -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 9999
+
+#./letsencrypt-auto certonly --standalone --test-cert -d $mydomain --standalone-supported-challenges http-01 --http-01-port 9999 --renew-by-default --email $myemail --agree-tos
+#./letsencrypt-auto certonly --standalone -d $mydomain --standalone-supported-challenges http-01 --http-01-port 9999 --renew-by-default --email $myemail --agree-tos
+
+#iptables -t nat -D PREROUTING -i $networkdevice -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 9999
+#iptables -D INPUT -p tcp -m tcp --dport 9999 -j ACCEPT
+
+
+#delete old keys
+$keytooldir/keytool -delete -alias root -storepass changeit -keystore $keystorefile
+$keytooldir/keytool -delete -alias tomcat -storepass changeit -keystore $keystorefile
+
+#generate new keys
+openssl pkcs12 -export -in $certdir/fullchain.pem -inkey $certdir/privkey.pem -out $certdir/cert_and_key.p12 -name tomcat -CAfile $certdir/chain.pem -caname root -password pass:aaa
+
+#import new keys
+$keytooldir/keytool -importkeystore -srcstorepass aaa -deststorepass changeit -destkeypass changeit -srckeystore $certdir/cert_and_key.p12 -srcstoretype PKCS12 -alias tomcat -keystore $keystorefile
+$keytooldir/keytool -import -trustcacerts -alias root -deststorepass changeit -file $certdir/chain.pem -noprompt -keystore $keystorefile
+
+
+# restart your Tomcat server – mine is running JIRA
+service jira stop
+service jira start
+
+#n gitlab
+gitlab-ctl stop
+gitlab-ctl start
